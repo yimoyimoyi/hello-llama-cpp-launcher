@@ -1,0 +1,322 @@
+{
+    "_FILE_COMMENT_0": "═" ,
+    "_FILE_COMMENT_1": "ui_config.json — Llama.cpp 启动器 用户界面配置文件",
+    "_FILE_COMMENT_2": "修改本文件可直接定制启动器的显示文字和界面行为，无需修改 Python 代码。",
+    "_FILE_COMMENT_3": "修改后重启启动器即可生效。",
+    "_FILE_COMMENT_4": "注意：JSON 标准不支持注释，因此用 _ 前缀的键模拟注释。",
+    "_FILE_COMMENT_5": "可安全修改所有 value（text/tooltip/label/color 等），不要删除或重命名键。",
+    "_FILE_COMMENT_6": "可用占位符 {name} {path} {error} {code} {count} {mode} {ngl} {free} {total} {err}",
+    "_FILE_COMMENT_7": "═" ,
+
+    "参数定义": {
+        "_comment": "schema 数组定义动态生成的参数控件。每个 group 对应一个 CollapsibleSection 分组，类型支持 string/int/float/bool/combo/check。",
+        "schema": [
+            {
+                "group_name": " 推理核心参数 (自动生成) ",
+                "_comment": "模型推理的核心超参数。",
+                "params": [
+                    {"id": "ngl",            "label": "GPU 层数 (-ngl):",       "type": "string", "default": "auto",   "arg": "-ngl",            "width": 12, "tooltip": "GPU 卸载层数：auto=自动检测, all=全部, 或指定数字"},
+                    {"id": "ctx",            "label": "上下文 (-c):",           "type": "int",    "default": 16384,    "arg": "-c",              "min": 512,   "max": 131072, "step": 512,  "width": 12, "tooltip": "上下文窗口大小（token 数），0=从模型读取"},
+                    {"id": "temp",           "label": "温度 (--temp):",         "type": "float",  "default": 0.7,       "arg": "--temp",          "min": 0.0,   "max": 2.0,   "step": 0.05, "width": 10, "tooltip": "生成温度，越高越随机，默认 0.80"},
+                    {"id": "rep_pen",        "label": "重复惩罚 (-rp):",        "type": "float",  "default": 1.1,       "arg": "--repeat-penalty", "min": 0.5,   "max": 2.0,   "step": 0.05, "width": 10, "tooltip": "重复惩罚系数，1.0=禁用"},
+                    {"id": "threads",        "label": "CPU 线程 (-t):",         "type": "int",    "default": 8,         "arg": "-t",              "min": 1,     "max": 64,    "step": 1,    "width": 12, "tooltip": "CPU 并行线程数，默认 -1=自动"},
+                    {"id": "tb",             "label": "批线程 (-tb):",          "type": "int",    "default": 1,         "arg": "-tb",             "min": 1,     "max": 64,    "step": 1,    "width": 12, "tooltip": "批处理线程数，默认同 --threads"},
+                    {"id": "batch",          "label": "批大小 (-b):",           "type": "int",    "default": 512,       "arg": "-b",              "min": 1,     "max": 32768, "step": 128,  "width": 12, "tooltip": "逻辑最大批大小，默认 2048"},
+                    {"id": "ubatch",         "label": "物理批 (-ub):",          "type": "int",    "default": 512,       "arg": "-ub",             "min": 1,     "max": 32768, "step": 128,  "width": 12, "tooltip": "物理最大批大小，默认 512"},
+                    {"id": "min_p",          "label": "最低概率 (--min-p):",    "type": "float",  "default": 0.05,      "arg": "--min-p",         "min": 0.0,   "max": 1.0,   "step": 0.01, "width": 12, "tooltip": "min-p 采样，0.0=禁用"},
+                    {"id": "top_p",          "label": "最高概率 (--top-p):",    "type": "float",  "default": 0.95,      "arg": "--top-p",         "min": 0.0,   "max": 1.0,   "step": 0.01, "width": 12, "tooltip": "top-p 核采样，1.0=禁用"},
+                    {"id": "image_min_tokens","label": "图像最小 Token:",        "type": "string", "default": "",        "arg": "--image-min-tokens","width": 12, "tooltip": "多模态每张图像最小 token 数"},
+                    {"id": "image_max_tokens","label": "图像最大 Token:",        "type": "string", "default": "",        "arg": "--image-max-tokens","width": 12, "tooltip": "多模态每张图像最大 token 数"}
+                ]
+            },
+            {
+                "group_name": " 投机解码 (--spec-type) ",
+                "_comment": "投机解码参数：开启后可加速推理生成。",
+                "params": [
+                    {"id": "spec_type",      "label": "投机解码类型:",          "type": "combo",   "default": "none",  "arg": "--spec-type",      "width": 16, "tooltip": "none/draft-simple/draft-eagle3/draft-mtp/ngram-simple/ngram-map-k/ngram-map-k4v/ngram-mod/ngram-cache", "options": ["none","draft-simple","draft-eagle3","draft-mtp","ngram-simple","ngram-map-k","ngram-map-k4v","ngram-mod","ngram-cache"]},
+                    {"id": "spec_draft_n_max","label": "Draft 最大 Token 数:",  "type": "int",    "default": 3,       "arg": "--spec-draft-n-max",  "min": 1, "max": 64, "step": 1, "width": 12, "tooltip": "投机解码每轮最大 draft token 数"},
+                    {"id": "spec_ngram_n_min",  "label": "Ngram-Mod 最小 N:",    "type": "int",    "default": 48,      "arg": "--spec-ngram-mod-n-min",  "min": 1, "max": 1024, "step": 1, "width": 12, "tooltip": "ngram 投机解码使用的最小 ngram token 数"},
+                    {"id": "spec_ngram_n_max",  "label": "Ngram-Mod 最大 N:",    "type": "int",    "default": 64,      "arg": "--spec-ngram-mod-n-max",  "min": 1, "max": 1024, "step": 1, "width": 12, "tooltip": "ngram 投机解码使用的最大 ngram token 数"},
+                    {"id": "spec_ngram_n_match","label": "Ngram-Mod 查找长度:",   "type": "int",    "default": 24,      "arg": "--spec-ngram-mod-n-match","min": 1,"max": 256, "step": 1, "width": 12, "tooltip": "ngram-mod 查找长度"}
+                ]
+            },
+            {
+                "group_name": " 显存与去重优化 ",
+                "_comment": "KV Cache 压缩、DRY 去重、显存优化选项。",
+                "params": [
+                    {"id": "cache_k",    "label": "Cache K 类型:",       "type": "string", "default": "",      "arg": "--cache-type-k",    "width": 12, "tooltip": "K Cache 数据类型: f32/f16/bf16/q8_0/q4_0 等，留空=默认 f16"},
+                    {"id": "cache_v",    "label": "Cache V 类型:",       "type": "string", "default": "",      "arg": "--cache-type-v",    "width": 12, "tooltip": "V Cache 数据类型: f32/f16/bf16/q8_0/q4_0 等，留空=默认 f16"},
+                    {"id": "dry_mult",   "label": "DRY 乘数:",           "type": "float",  "default": 0.8,   "arg": "--dry-multiplier", "min": 0.0,   "max": 5.0,   "step": 0.1,  "width": 12, "tooltip": "DRY 采样乘数，0.0=禁用"},
+                    {"id": "dry_base",   "label": "DRY 基础:",           "type": "float",  "default": 1.75,  "arg": "--dry-base",       "min": 0.0,   "max": 10.0,  "step": 0.05, "width": 12, "tooltip": "DRY 采样基础值，默认 1.75"},
+                    {"id": "dry_len",    "label": "DRY 允许长度:",       "type": "int",    "default": 2,     "arg": "--dry-allowed-length","min": 0,   "max": 100,   "step": 1,    "width": 12, "tooltip": "DRY 允许的最大重复 token 长度，默认 2"},
+                    {"id": "flash_attn", "label": "Flash-Attn:",         "type": "check",  "default": true,  "arg": "--flash-attn",     "width": 8, "tooltip": "Flash Attention 加速，取消勾选可禁用 FA", "checked_val": "on", "unchecked_val": "off"},
+                    {"id": "no_mmap",    "label": "禁用 MMAP:",          "type": "bool",   "default": false, "arg": "--no-mmap",        "bool_val": "", "tooltip": "禁用内存映射加载（更慢但可能减少 pageout）"},
+                    {"id": "mlock",      "label": "锁定内存:",           "type": "bool",   "default": false, "arg": "--mlock",          "bool_val": "", "tooltip": "强制模型常驻物理 RAM，防止被 swap"},
+                    {"id": "cmoe",       "label": "专家常驻 (-cmoe):",   "type": "bool",   "default": false, "arg": "-cmoe",           "bool_val": "", "tooltip": "MoE 所有专家权重保留在 GPU"},
+                    {"id": "ncmoe",      "label": "内存专家层数:",       "type": "string", "default": "",     "arg": "-ncmoe",          "width": 12, "tooltip": "前 N 层 MoE 专家权重保留在 CPU"},
+                    {"id": "fit",        "label": "显存自适应:",         "type": "check",  "default": true,  "arg": "--fit",           "width": 8, "tooltip": "显存自适应分配 (取消勾选可避免额外显存开销)", "checked_val": "on", "unchecked_val": "off"}
+                ]
+            }
+        ],
+        "ui_sections": [
+            {
+                "_comment": "运行模式与端口 — type 支持：checkbox/label/text/radio/file/button。radio 用 group 分组互斥。",
+                "group_name": " 运行与附加参数 ",
+                "controls": [
+                    {"id": "is_server_mode", "type": "checkbox", "label": "Server (API) 模式", "default": false},
+                    {"id": "port_label",     "type": "label",    "text": "端口:", "new_row": false},
+                    {"id": "port",           "type": "text",     "default": "8080", "width": 80, "config_key": "last_port", "new_row": false},
+                    {"id": "console_mode",   "type": "checkbox", "label": "外部控制台", "default": false, "new_row": false},
+                    {"id": "auto_open_browser", "type": "checkbox", "label": "自动打开浏览器", "default": true, "new_row": false},
+                    {"id": "mode_label", "type": "label", "text": "", "new_row": false}
+                ]
+            },
+            {
+                "group_name": " 思考控制与多模态 ",
+                "controls": [
+                    {"id": "think_normal", "type": "radio",   "label": "正常输出", "group": "think_mode", "value": "normal"},
+                    {"id": "think_hide",   "type": "radio",   "label": "完全隐藏", "group": "think_mode", "value": "hide", "new_row": false},
+                    {"id": "think_stop",   "type": "radio",   "label": "物理截断", "group": "think_mode", "value": "stop", "new_row": false},
+                    {"id": "think_budget", "type": "text",    "label": "思考 Token 限制:", "default": "0"},
+                    {"id": "mmproj_cb",    "type": "checkbox","label": "启用", "default": false, "config_key": "mmproj_enable"},
+                    {"id": "mmproj",       "type": "file",    "label": "MMProj 文件:", "default": "", "enable_by": "mmproj_cb", "new_row": false},
+                    {"id": "draft_cb",     "type": "checkbox","label": "启用", "default": false, "config_key": "model_draft_enable"},
+                    {"id": "model_draft",  "type": "file",    "label": "Draft 模型:", "default": "", "enable_by": "draft_cb", "new_row": false}
+                ]
+            },
+            {
+                "group_name": " 额外参数 ",
+                "controls": [
+                    {"id": "global_args",  "type": "text",    "label": "全局默认参数:",   "default": "", "placeholder": "--no-warmup --cont-batching", "new_row": false},
+                    {"id": "custom_args",  "type": "text",    "label": "当前模型专属参数:", "default": "", "placeholder": "--special-token ...", "new_row": false}
+                ]
+            }
+        ]
+    },
+
+    "按钮文字与提示": {
+        "_comment": "按钮显示文字和 tooltip。theme 按钮有两个文字：text_dark（暗色模式）/ text_light（亮色模式）。",
+        "buttons": {
+            "launch":        {"text": "▶ 启动",        "tooltip": "启动当前配置的模型"},
+            "stop":          {"text": "⏹ 停止",        "tooltip": "停止运行中的进程"},
+            "preview":       {"text": "📋 预览",        "tooltip": "预览即将执行的命令"},
+            "theme":         {"text_dark": "🌙 暗色",  "text_light": "☀ 亮色", "tooltip": "切换亮色/暗色主题"},
+            "refresh":       {"text": "🔄 刷新模型",    "tooltip": ""},
+            "save_preset":   {"text": "💾 保存状态",    "tooltip": ""},
+            "delete_preset": {"text": "🗑 删除预设",    "tooltip": "删除当前选中模型的已保存预设"},
+            "download_bin":  {"text": "⬇ 下载 Bin",    "tooltip": "下载 llama.cpp 二进制文件"},
+            "update_bin":    {"text": "🔄 更新 Bin",    "tooltip": "下载前清空 bin 目录 (仅 Windows)"},
+            "stop_download": {"text": "⏹ 停止下载",    "tooltip": "中断正在进行的下载"},
+            "fetch_files":   {"text": "📡 获取可用文件", "tooltip": "获取当前平台可下载的 llama.cpp 二进制文件列表"},
+            "vram_detect":   {"text": "🎯 显存检测",    "tooltip": "检测空闲显存并自动设置 GPU 层数"},
+            "browse":        {"text": "浏览",           "tooltip": ""},
+            "open_dir":      {"text": "打开",           "tooltip": ""},
+            "redetect":      {"text": "重新检测",        "tooltip": ""},
+            "select_file":   {"text": "选择",           "tooltip": ""},
+            "select_mmproj": {"text": "选择",           "tooltip": ""},
+            "save_script":   {"text": "💾 保存脚本",    "tooltip": "将命令保存为启动脚本"},
+            "delete_preset_tooltip": "删除当前选中模型的已保存预设",
+            "copy":          {"text": "📋 复制",        "tooltip": "复制命令到剪贴板"},
+            "gen_bat":       {"text": "📝 生成 Bat",    "tooltip": "生成 .bat 启动脚本到程序目录"},
+            "close":         {"text": "关闭",           "tooltip": ""},
+            "send":          {"text": "发送",           "tooltip": ""},
+            "clear":         {"text": "清屏",           "tooltip": ""},
+            "export_log":    {"text": "📥 导出日志",    "tooltip": "将控制台内容导出为日志文件"}
+        }
+    },
+
+    "窗口标题": {
+        "_comment": "主窗口和各个对话框的标题栏文字。",
+        "main_window": "Llama.cpp 启动器",
+        "preview_dialog": "启动命令预览",
+        "export_log_title": "导出日志",
+        "export_success_title": "导出成功",
+        "export_fail_title": "导出失败",
+        "bat_save_success_title": "保存成功",
+        "bat_save_fail_title": "保存失败",
+        "preset_info_title": "提示",
+        "preset_confirm_title": "确认删除",
+        "select_bin": "选择 Bin 目录",
+        "select_model": "选择模型目录",
+        "params_tab": "📊 参数",
+        "settings_tab": "⚙ 设置",
+        "console_tab": "📟 控制台",
+        "startup_error_title": "启动错误",
+        "param_error_title": "参数错误",
+        "warning_title": "警告",
+        "select_mmproj_title": "选择 MMProj 文件",
+        "select_draft_title": "选择 Draft 模型文件"
+    },
+
+    "占位文本": {
+        "_comment": "输入框内的灰色占位提示文字，用户未输入时显示。",
+        "cli_placeholder": "输入消息并回车发送到进程 (CLI 模式) ...",
+        "server_placeholder": "Server 模式无需输入",
+        "global_args_placeholder": "--no-warmup --cont-batching",
+        "custom_args_placeholder": "--special-token ..."
+    },
+
+    "界面标签": {
+        "_comment": "所有非按钮的静态界面文字：分组标题、字段标签、复选框文字、单选按钮文字等。",
+        "scale_label": "缩放:",
+        "scale_tooltip": "全局缩放比例（按钮/输入框/字体）",
+        "scale_slider_tooltip": "50% – 200%",
+        "status_ready": "就绪",
+        "tab_settings": "⚙ 设置",
+        "tab_console": "🖥 控制台",
+        "tab_prefs": "⚙ 偏好设置",
+        "preview_hint": "以下是将要执行的完整命令：",
+        "group_path": " 核心路径 ",
+        "group_think_vision": " 思考控制与多模态 ",
+        "group_mode_args": " 运行与附加参数 ",
+        "label_bin_dir": "Bin 目录:",
+        "label_model_dir": "模型目录:",
+        "label_detected_exe": "检测到的 EXE:",
+        "label_model_select": "选择模型 (切换自动加载预设):",
+        "model_section": "模型选择",
+        "label_think_budget": "思考 Token 限制:",
+        "label_mmproj": "MMProj 文件:",
+        "label_port": "端口:",
+        "label_global_args": "全局默认参数 (所有模型通用):",
+        "label_custom_args": "当前模型专属参数:",
+        "label_exe_not_found": "(未检测)",
+        "checkbox_server_mode": "Server (API) 模式",
+        "checkbox_console_mode": "外部控制台窗口",
+        "tooltip_console_mode": "启用后直接弹出独立命令行窗口运行，不在应用内捕获输出",
+        "checkbox_auto_browser": "自动打开浏览器",
+        "tooltip_auto_browser": "Server 就绪后自动打开浏览器访问本地地址",
+        "checkbox_enable": "启用",
+        "radio_normal": "正常输出",
+        "radio_hide": "完全隐藏",
+        "radio_stop": "物理截断",
+        "mode_cli": "CLI",
+        "mode_server": "Server",
+        "label_font_file": "自定义字体路径:",
+        "label_font_file_tip": "留空则使用系统默认字体",
+        "group_font": " 📝 字体设置 ",
+        "label_language": "界面语言:",
+        "group_language": " 🌐 语言设置 ",
+        "section_path": "核心路径",
+        "section_font": "字体",
+        "section_language": "语言",
+        "section_think": "思考控制",
+        "section_mode": "运行模式与参数",
+        "section_params_1": "推理核心参数",
+        "section_params_2": "显存与去重优化",
+        "section_appearance": "外观",
+        "section_scale": "缩放",
+        "section_download": "下载与更新",
+        "label_theme": "主题:",
+        "label_auto_scale": "自适应",
+        "label_retry": "重试:",
+        "label_timeout": "超时(s):",  "_sec_1": "可折叠分段标题（section_*），用户可自定义为任意文字，语言文件会覆盖此处。"
+    },
+
+    "控制台颜色": {
+        "_comment": "控制台输出颜色的色值（亮色/暗色两套）。键名: background/foreground/border/green/red/yellow/blue。",
+        "dark": {
+            "background": "#1e1e1e",
+            "foreground": "#e8e8e8",
+            "border": "#333333",
+            "green": "#4ec9b0",
+            "red": "#ce9178",
+            "yellow": "#dcdcaa",
+            "blue": "#569cd6"
+        },
+        "light": {
+            "background": "#ffffff",
+            "foreground": "#111111",
+            "border": "#cccccc",
+            "green": "#0f7a0f",
+            "red": "#cc2222",
+            "yellow": "#b8860b",
+            "blue": "#1565c0"
+        }
+    },
+
+    "主题颜色": {
+        "_comment": "QSS 未覆盖的独立控件颜色（亮色/暗色两套）。exe_label=程序检测标签色, btn_delete_preset=删除按钮色, cmd_text_*=命令预览区色。",
+        "dark": {
+            "exe_label": "#aaaaaa",
+            "btn_delete_preset": "#888888",
+            "cmd_text_bg": "#1e1e1e",
+            "cmd_text_fg": "#e8e8e8",
+            "cmd_text_border": "#333333"
+        },
+        "light": {
+            "exe_label": "#666666",
+            "btn_delete_preset": "#999999",
+            "cmd_text_bg": "#f5f5f5",
+            "cmd_text_fg": "#1a1a1a",
+            "cmd_text_border": "#d0d0d0"
+        }
+    },
+
+    "可执行文件搜索": {
+        "_comment": "自动搜索的可执行文件名称列表，按优先级排列。",
+        "common_exes": ["llama-server.exe", "llama-cli.exe", "main.exe", "llama.exe"]
+    },
+
+    "SpinBox 箭头颜色": {
+        "_comment": "QSpinBox/QDoubleSpinBox 上下箭头 PNG 图标的颜色。",
+        "dark": "#e8e8e8",
+        "light": "#1a1a1a"
+    },
+
+    "消息文本": {
+        "_comment": "操作提示和状态消息。{...} 是运行时替换的占位符：{name} {path} {error} {code} {count} {mode} {ngl} {free} {total} {err}",
+        "save_failed": "保存失败: {error}",
+        "preset_deleted": "已删除预设: {name}",
+        "preset_loaded": "已加载配置: {name}",
+        "preset_no_preset": "「{name}」没有预设。",
+        "preset_folder": "当前选中的是文件夹标题。",
+        "preset_confirm_msg": "确定删除「{name}」的预设吗？",
+        "export_log_success": "日志已保存至：\n{path}",
+        "export_log_fail": "无法保存日志：{error}",
+        "bat_save_success": "启动脚本已保存至：\n{path}",
+        "bat_save_fail": "无法保存 bat 文件：{error}",
+        "startup_error_no_model": "请选择具体的模型文件。",
+        "startup_error_no_exe": "找不到可执行文件，请检查 Bin 目录。",
+        "startup_error_model_missing": "模型文件不存在:\n{path}",
+        "startup_warning_mmproj": "MMProj 文件不存在:\n{path}",
+        "launch_starting": "⏳ 启动中: {name}...",
+        "launch_running": "进程已在后台运行中",
+        "launch_exit_ok": "✅ 进程已正常退出",
+        "launch_exit_fail": "⚠ 进程退出 (返回码 {code})",
+        "launch_failed": "❌ 启动失败",
+        "launch_stopping": "⏹ 正在停止进程...",
+        "vram_detecting": "正在检测显存...",
+        "vram_detect_fail": "显存检测失败: {error}",
+        "vram_detect_done": "显存检测完成",
+        "vram_label": "VRAM: 已用 {used} / 总计 {total} MiB",
+        "vram_detecting_label": "VRAM: 检测中...",
+        "vram_unknown_label": "VRAM: 未检测",
+        "mode_label": "  |  模式: {mode}",
+        "mode_switched": "已切换至 {mode} 模式",
+        "refresh_done": "已刷新: {count} 个模型",
+        "refresh_error": "刷新出错: {error}",
+        "exe_not_found_alert": "⚠ 未找到 (请设置 Bin 目录)",
+        "bat_launch_file": "{name}_launch.bat",
+        "font_loaded": "✅ 已加载自定义字体: {name}",
+        "font_load_failed": "❌ 字体文件加载失败: {path}",
+        "font_error": "⚠ 字体处理异常: {err}",
+        "launch_console_mode": "🖥 外部控制台: {name}",
+        "launch_console_started": "✅ 外部控制台已打开，进程独立运行中。",
+        "download_disabled_tip": "已检测到可执行文件，下载已停用。请使用右侧「更新 Bin」按钮覆盖。",
+        "update_cleared": "🗑 已清理旧 bin 文件，开始更新...",
+        "download_hint_has_bin": "已检测到可执行文件，可获取更新列表。",
+        "download_hint_no_bin": "获取当前平台可下载的 llama.cpp 二进制文件列表",
+        "server_ready_label": "✅ Server 运行中 | {url}",
+        "copied": "已复制到剪贴板",
+        "script_saved": "脚本已保存到:\n{path}",
+        "script_saved_title": "脚本已保存",
+        "download_cancelled": "下载已取消",
+        "download_done": "✅ 下载完成",
+        "download_failed": "❌ 下载失败",
+        "invalid_budget": "思考 Token 限制必须是非负整数。",
+        "invalid_custom_args": "模型专属参数包含不安全字符: {arg}",
+        "invalid_global_args": "全局参数包含不安全字符: {arg}",
+        "invalid_param_value": "参数 {name} 包含不安全字符",
+        "invalid_port": "端口号无效，必须是 1-65535 之间的整数。"
+    }
+}

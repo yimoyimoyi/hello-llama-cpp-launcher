@@ -1,0 +1,10 @@
+﻿__pycache__/
+*.pyc
+.cache/
+launcher_config.json
+assets/release_cache.json
+assets/aria2.zip
+assets/aria2c.exe
+.venv/
+bin/
+model_qwen/
