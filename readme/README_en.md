@@ -109,10 +109,10 @@ Enable to interact via stdin in a terminal window.
 │
 ├── src/
 │   ├── config.py                # Paths / QSS loader / i18n engine / defaults
-│   ├── widgets_pyside6.py               # Custom widgets (collapsible panel / combobox / console)
-│   ├── download_pyside6.py              # Download thread + VRAM detection thread
+│   ├── widgets.py               # Custom widgets (collapsible panel / combobox / console)
+│   ├── download.py              # Download thread + VRAM detection thread
 │   ├── backends.py              # Backend registry (CUDA/Vulkan/SYCL/CPU)
-│   ├── launcher_pyside6.py              # Process launch thread
+│   ├── launcher.py              # Process launch thread
 │   ├── platform.py              # Platform dispatch (Win/Linux auto-import)
 │   ├── platform_win.py          # Windows platform functions
 │   └── platform_linux.py        # Linux platform functions

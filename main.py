@@ -9,6 +9,7 @@ import re
 import json
 import webbrowser
 import subprocess
+import functools
 from typing import Optional
 
 from PySide6.QtWidgets import (
@@ -24,7 +25,6 @@ from PySide6.QtGui import QFont, QFontDatabase, QColor, QPixmap, QPainter, QPoly
 # ── 从 src 包导入解耦模块 ──
 from src.config import (
     BASE_DIR, BIN_DIR, CONFIG_PATH,
-    COMMON_EXES,
     STYLESHEET, LIGHT_STYLESHEET,
     BTN, WIN_TITLES, PH, UI_LABELS, MSG,
     DYNAMIC_UI_SCHEMA, UI_SECTIONS, DEFAULT_CONFIG,
@@ -32,14 +32,19 @@ from src.config import (
     _open_folder,
     _list_locales, _list_locales_with_names, _apply_locale_to_globals,
     find_executables_in_dir, has_executables,
+    get_release_cache_info,
     CREATE_NEW_CONSOLE, REF_WIDTH_FOR_SCALE,
 )
 from src.platform import (
     open_folder, save_script,
 )
-from src.launcher_pyside6 import LaunchThread
-from src.download_pyside6 import ReleaseDownloadThread, VramCheckThread
-from src.widgets_pyside6 import (
+from src.launcher import LaunchThread
+from src.download import ReleaseDownloadThread, VramCheckThread
+from src.command_builder import (
+    LaunchConfig, BuildError, find_executable,
+    build_command_args as _build_command_args,
+)
+from src.widgets import (
     CollapsibleSection, AdaptiveComboBox, ConsoleWidget, CommandPreviewDialog,
     NoWheelSpinBox, NoWheelDoubleSpinBox,
 )
@@ -385,11 +390,8 @@ class LlamaProLauncher(QMainWindow):
 
         def _mk_section(key: str, title: str, widget: QWidget) -> CollapsibleSection:
             collapsed = self.config.get("collapsed_sections", {}).get(key, False)
-            sec = CollapsibleSection(title, widget, section_key=key, collapsed=collapsed)
-            sec._toggle = (lambda s=sec, k=key: (
-                s.set_collapsed(not s._collapsed),
-                self._on_section_toggled(k, s._collapsed),
-            )[-1])
+            sec = CollapsibleSection(title, widget, section_key=key, collapsed=collapsed,
+                                     on_toggled=self._on_section_toggled)
             self._sections.append(sec)
             return sec
 
@@ -937,9 +939,15 @@ class LlamaProLauncher(QMainWindow):
         has_bin = self._has_bin_files()
         self.btn_fetch.setEnabled(True)
         if has_bin:
-            self.btn_fetch.setToolTip(MSG.get("download_hint_has_bin", "已检测到可执行文件，可获取更新列表。"))
+            tip = MSG.get("download_hint_has_bin", "已检测到可执行文件，可获取更新列表。")
         else:
-            self.btn_fetch.setToolTip(MSG.get("download_hint_no_bin", "获取当前平台可下载的 llama.cpp 二进制文件列表"))
+            tip = MSG.get("download_hint_no_bin", "获取当前平台可下载的 llama.cpp 二进制文件列表")
+        # 附加 Release 缓存状态提示（T03）
+        info = get_release_cache_info()
+        if info:
+            tag, fetched_at = info
+            tip += f"\n缓存于 {fetched_at.replace('T', ' ')}（{tag}），点击强制刷新"
+        self.btn_fetch.setToolTip(tip)
 
     def _start_download(self, is_update: bool = False):
         if self._dl_thread and self._dl_thread.isRunning():
@@ -971,27 +979,7 @@ class LlamaProLauncher(QMainWindow):
             bin_dir, backend_id="",
             retry_count=retry, timeout=timeout,
         )
-
-        def _on_assets(available: list):
-            while self._dl_list_layout.count():
-                item = self._dl_list_layout.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
-            for a in available:
-                label = f"[{a['backend_label']}] {a['name']}  ({a['size']}MB)"
-                btn = QPushButton(label)
-                btn.setStyleSheet("QPushButton{text-align:left;padding:2px 6px;font-size:7.5pt;}")
-                def _make_callback(asset):
-                    return lambda: self._start_asset_download(asset)
-                btn.clicked.connect(_make_callback(a))
-                self._dl_list_layout.addWidget(btn)
-            self._dl_list_widget.setVisible(True)
-            self._dl_thread = None
-            self.btn_fetch.setText(BTN.get("fetch_files", "📡 获取可用文件"))
-            self.btn_fetch.setEnabled(True)
-            self.console and self.console.append_output(
-                f"📋 获取到 {len(available)} 个可用文件，在设置页点击下载", "green")
-        self._dl_thread.assets_signal.connect(_on_assets)
+        self._dl_thread.assets_signal.connect(self._on_download_assets)
         self._wire_dl_signals()
 
     def _start_asset_download(self, asset: dict):
@@ -1003,39 +991,80 @@ class LlamaProLauncher(QMainWindow):
             bin_dir, backend_id="",
             retry_count=retry, timeout=timeout,
         )
-        self._dl_thread.set_asset(asset["name"], asset["url"], asset.get("size", 0))
+        self._dl_thread.set_asset(asset["name"], asset["url"],
+                                  asset.get("size", 0), asset.get("kind", "main"))
         self._wire_dl_signals()
 
     def _wire_dl_signals(self):
-        self._dl_thread.raw_signal.connect(lambda msg: (
-            self.console and self.console.append_output(msg, "gray"),
-        ))
-        self._dl_thread.status_signal.connect(lambda msg: (
-            self.status_label.setText(msg),
-        ))
-        self._dl_thread.progress_signal.connect(lambda cur, total: (
-            self.progress_bar.setVisible(True),
-            self.progress_bar.setMaximum(total),
-            self.progress_bar.setValue(cur),
-        ))
-        self._dl_thread.finished_signal.connect(lambda path: (
-            setattr(self, '_dl_thread', None),
-            self.btn_fetch.setText(BTN.get("fetch_files", "📡 获取可用文件")),
-            self.progress_bar.setVisible(False),
-            self.status_label.setText(MSG.get("download_done", "✅ 下载完成")),
-            self.detect_executables(),
-            self._update_download_buttons(),
-        ))
-        self._dl_thread.error_signal.connect(lambda err: (
-            setattr(self, '_dl_thread', None),
-            self.btn_fetch.setText(BTN.get("fetch_files", "📡 获取可用文件")),
-            self.progress_bar.setVisible(False),
-            self.status_label.setText(MSG.get("download_failed", "❌ 下载失败")),
-            self.console and self.console.append_output(err, "red"),
-        ))
+        self._dl_thread.raw_signal.connect(self._on_download_raw)
+        self._dl_thread.status_signal.connect(self._on_download_status)
+        self._dl_thread.progress_signal.connect(self._on_download_progress)
+        self._dl_thread.finished_signal.connect(self._on_download_finished)
+        self._dl_thread.error_signal.connect(self._on_download_error)
         self._dl_thread.start()
         self.btn_fetch.setText(BTN.get("stop_download", "⏹ 停止下载"))
         self.btn_stop.setEnabled(True)
+
+    # ── 下载线程信号具名回调 ──
+    # 注意：finished/error/assets 回调里用 self.sender() 守卫——
+    # 线程对象每次操作都新建，旧线程信号延迟到达时不得误清新线程的引用。
+
+    def _is_current_dl(self) -> bool:
+        """信号来源线程是否为当前 _dl_thread（防快速连点竞态）。"""
+        return self._dl_thread is not None and self._dl_thread is self.sender()
+
+    def _on_download_assets(self, available: list):
+        if not self._is_current_dl():
+            return
+        while self._dl_list_layout.count():
+            item = self._dl_list_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for a in available:
+            # cudart 伴生包加"CUDA 运行时"标记，与主包区分
+            tag = MSG.get("label_cudart", "CUDA 运行时") if a.get("kind") == "cudart" else ""
+            tag = f" · {tag}" if tag else ""
+            label = f"[{a['backend_label']}{tag}] {a['name']}  ({a['size']}MB)"
+            btn = QPushButton(label)
+            btn.setStyleSheet("QPushButton{text-align:left;padding:2px 6px;font-size:7.5pt;}")
+            btn.clicked.connect(functools.partial(self._start_asset_download, a))
+            self._dl_list_layout.addWidget(btn)
+        self._dl_list_widget.setVisible(True)
+        self._dl_thread = None
+        self.btn_fetch.setText(BTN.get("fetch_files", "📡 获取可用文件"))
+        self.btn_fetch.setEnabled(True)
+        self.console and self.console.append_output(
+            f"📋 获取到 {len(available)} 个可用文件，在设置页点击下载", "green")
+
+    def _on_download_raw(self, msg: str):
+        self.console and self.console.append_output(msg, "gray")
+
+    def _on_download_status(self, msg: str):
+        self.status_label.setText(msg)
+
+    def _on_download_progress(self, cur: int, total: int):
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setMaximum(total)
+        self.progress_bar.setValue(cur)
+
+    def _on_download_finished(self, path: str):
+        if not self._is_current_dl():
+            return
+        self._dl_thread = None
+        self.btn_fetch.setText(BTN.get("fetch_files", "📡 获取可用文件"))
+        self.progress_bar.setVisible(False)
+        self.status_label.setText(MSG.get("download_done", "✅ 下载完成"))
+        self.detect_executables()
+        self._update_download_buttons()
+
+    def _on_download_error(self, err: str):
+        if not self._is_current_dl():
+            return
+        self._dl_thread = None
+        self.btn_fetch.setText(BTN.get("fetch_files", "📡 获取可用文件"))
+        self.progress_bar.setVisible(False)
+        self.status_label.setText(MSG.get("download_failed", "❌ 下载失败"))
+        self.console and self.console.append_output(err, "red")
 
     # ═══════════════════════════════════════════════
     #  显存检测
@@ -1444,221 +1473,113 @@ class LlamaProLauncher(QMainWindow):
     #  可执行文件查找
     # ═══════════════════════════════════════════════
 
-    def find_executable(self, is_server: bool = False) -> Optional[str]:
-        _exe_suffix = ".exe" if sys.platform == "win32" else ""
-        target = f"llama-server{_exe_suffix}" if is_server else f"llama-cli{_exe_suffix}"
-        target_lower = target.lower()
-        bin_dir = os.path.abspath(self.custom_widgets["bin_dir"].text())
-        if os.path.isdir(bin_dir):
-            p = os.path.join(bin_dir, target)
-            if os.path.isfile(p):
-                return p
-            for exe in COMMON_EXES:
-                p = os.path.join(bin_dir, exe)
-                if os.path.isfile(p):
-                    return p
-        all_lower = [x.lower() for x in COMMON_EXES]
-        for root, _, files in os.walk(BASE_DIR):
-            for f in files:
-                fl = f.lower()
-                if fl == target_lower or fl in all_lower:
-                    found = os.path.join(root, f)
-                    self.custom_widgets["bin_dir"].setText(root)
-                    self.config["bin_dir"] = root
-                    self.save_settings()
-                    return found
-        return None
-
     # ═══════════════════════════════════════════════
-    #  构建命令
+    #  构建命令（收集 Qt 取值 → 委托 command_builder 纯函数）
     # ═══════════════════════════════════════════════
 
-    def build_command_args(self) -> Optional[list]:
+    # BuildError.code → (消息键, 弹窗级别) 映射；detail 替换消息中的 {path}/{name}/{arg}
+    _BUILD_ERROR_MSGS = {
+        "no_model":            ("startup_error_title", "startup_error_no_model", QMessageBox.warning),
+        "no_exe":              ("startup_error_title", "startup_error_no_exe", QMessageBox.critical),
+        "model_missing":       ("startup_error_title", "startup_error_model_missing", QMessageBox.critical),
+        "invalid_param":       ("param_error_title", "invalid_param_value", QMessageBox.warning),
+        "invalid_port":        ("param_error_title", "invalid_port", QMessageBox.warning),
+        "invalid_budget":      ("param_error_title", "invalid_budget", QMessageBox.warning),
+        "invalid_global_args": ("param_error_title", "invalid_global_args", QMessageBox.warning),
+        "invalid_custom_args": ("param_error_title", "invalid_custom_args", QMessageBox.warning),
+        "warn_mmproj":         ("warning_title", "startup_warning_mmproj", QMessageBox.warning),
+        "warn_model_draft":    ("warning_title", "startup_warning_model_draft", QMessageBox.warning),
+    }
+
+    def _show_build_error(self, err) -> None:
+        cfg_map = self._BUILD_ERROR_MSGS.get(err.code)
+        if not cfg_map:
+            return
+        title_key, msg_key, kind = cfg_map
+        title = WIN_TITLES.get(title_key, "错误")
+        default = {
+            "startup_error_no_model": "请选择具体的模型文件。",
+            "startup_error_no_exe": "找不到可执行文件，请检查 Bin 目录。",
+            "startup_error_model_missing": "模型文件不存在:\n{path}",
+            "invalid_param_value": "参数 {name} 包含不安全字符",
+            "invalid_port": "端口号无效，必须是 1-65535 之间的整数。",
+            "invalid_budget": "思考 Token 限制必须是非负整数。",
+            "invalid_global_args": "全局参数包含不安全字符: {arg}",
+            "invalid_custom_args": "模型专属参数包含不安全字符: {arg}",
+            "startup_warning_mmproj": "MMProj 文件不存在:\n{path}",
+            "startup_warning_model_draft": "Draft 模型文件不存在:\n{path}",
+        }[msg_key]
+        text = MSG.get(msg_key, default).replace("{path}", err.detail).replace("{name}", err.detail).replace("{arg}", err.detail)
+        kind(self, title, text)
+
+    def _collect_launch_config(self):
+        """收集 Qt 控件取值 → LaunchConfig；模型/exe 守卫失败返回 (None, BuildError)。"""
         combo    = self.get_combo()
         name     = combo.currentText()
         rel_path = self.full_paths.get(name)
         if not rel_path or rel_path == "__DIRECTORY__":
-            QMessageBox.warning(self, WIN_TITLES.get("startup_error_title", "启动错误"),
-                MSG.get("startup_error_no_model", "请选择具体的模型文件。"))
-            return None
+            return None, BuildError("no_model")
 
         is_server = self.custom_widgets["is_server_mode"].isChecked()
-        exe = self.find_executable(is_server)
-        if not exe:
-            QMessageBox.critical(self, WIN_TITLES.get("startup_error_title", "启动错误"),
-                MSG.get("startup_error_no_exe", "找不到可执行文件，请检查 Bin 目录。"))
-            return None
+        bin_dir_text = self.custom_widgets["bin_dir"].text()
+        exe_path, found_root = find_executable(bin_dir_text, BASE_DIR, is_server)
+        if not exe_path:
+            return None, BuildError("no_exe")
+        # 第三段兜底命中时，回写 bin_dir 配置（原逻辑副作用）
+        if found_root and found_root != os.path.abspath(bin_dir_text):
+            self.custom_widgets["bin_dir"].setText(found_root)
+            self.config["bin_dir"] = found_root
+            self.save_settings()
 
         model_path = os.path.abspath(os.path.normpath(
             os.path.join(self.custom_widgets["model_dir"].text(), rel_path)))
         if not os.path.exists(model_path):
-            QMessageBox.critical(self, WIN_TITLES.get("startup_error_title", "启动错误"),
-                MSG.get("startup_error_model_missing", "模型文件不存在:\n{path}").replace("{path}", model_path))
+            return None, BuildError("model_missing", model_path)
+
+        def _wval(w):
+            """控件取值（与 schema 类型对应）：string/combo 去空白，数值原样。"""
+            if isinstance(w, QLineEdit):
+                return w.text().strip()
+            if isinstance(w, (QSpinBox, QDoubleSpinBox)):
+                return w.value()
+            if isinstance(w, QCheckBox):
+                return w.isChecked()
+            if isinstance(w, QComboBox):
+                return w.currentText().strip()
             return None
 
-        args = [exe, "-m", model_path]
+        def _text(key: str, default: str = "") -> str:
+            w = self.custom_widgets.get(key)
+            return w.text().strip() if w else default
 
-        current_spec_type = ""
-        spec_w = self.dynamic_vars.get("spec_type")
-        if isinstance(spec_w, QComboBox):
-            current_spec_type = spec_w.currentText().strip()
+        cfg = LaunchConfig(
+            model_rel_path=rel_path,
+            model_display=name,
+            is_server=is_server,
+            exe_path=exe_path,
+            model_dir=self.custom_widgets["model_dir"].text().strip(),
+            dynamic_values={pid: _wval(w) for pid, w in self.dynamic_vars.items()},
+            think_mode=self._think_mode,
+            port=_text("port"),
+            think_budget=_text("think_budget"),
+            mmproj=_text("mmproj"),
+            mmproj_enabled=self.custom_widgets.get("mmproj_cb", QCheckBox()).isChecked(),
+            model_draft=_text("model_draft"),
+            draft_enabled=self.custom_widgets.get("draft_cb", QCheckBox()).isChecked(),
+            global_args=_text("global_args"),
+            custom_args=_text("custom_args"),
+        )
+        return cfg, None
 
-        for group in DYNAMIC_UI_SCHEMA:
-            for param in group["params"]:
-                pid = param["id"]
-                w   = self.dynamic_vars[pid]
-
-                if pid == "spec_draft_n_max" and not current_spec_type.startswith("draft-"):
-                    continue
-                if pid.startswith("spec_ngram_") and not current_spec_type.startswith("ngram-"):
-                    continue
-
-                if isinstance(w, QCheckBox):
-                    if param.get("type") == "check":
-                        val = param.get("checked_val", "on") if w.isChecked() else param.get("unchecked_val", "off")
-                        args.extend([param["arg"], val])
-                    else:
-                        if w.isChecked():
-                            bv = param.get("bool_val")
-                            if bv:
-                                args.extend([param["arg"], bv])
-                            else:
-                                args.append(param["arg"])
-                elif isinstance(w, QComboBox):
-                    val = w.currentText().strip()
-                    # spec_type="none" 表示不启用投机解码，跳过传参
-                    if pid == "spec_type" and val == "none":
-                        continue
-                    if val:
-                        if not self._validate_arg(val):
-                            QMessageBox.warning(self, WIN_TITLES.get("param_error_title", "参数错误"),
-                                MSG.get("invalid_param_value", "参数 {name} 包含不安全字符").replace("{name}", pid))
-                            return None
-                        args.extend([param["arg"], val])
-                else:
-                    if isinstance(w, QLineEdit):
-                        val = w.text().strip()
-                        if not val:
-                            continue
-                        if not self._validate_arg(val):
-                            QMessageBox.warning(self, WIN_TITLES.get("param_error_title", "参数错误"),
-                                MSG.get("invalid_param_value", "参数 {name} 包含不安全字符").replace("{name}", pid))
-                            return None
-                        args.extend([param["arg"], val])
-                    elif isinstance(w, (QSpinBox, QDoubleSpinBox)):
-                        val = w.value()
-                        if val == 0:
-                            continue
-                        args.extend([param["arg"], str(val)])
-
-        if is_server:
-            port = self.custom_widgets["port"].text().strip()
-            if not self._validate_port(port):
-                QMessageBox.warning(self, WIN_TITLES.get("param_error_title", "参数错误"),
-                    MSG.get("invalid_port", "端口号无效，必须是 1-65535 之间的整数。"))
-                return None
-            args += ["--port", port]
-        else:
-            args += ["--color", "on", "-cnv"]
-
-        mode   = self._think_mode
-        budget = self.custom_widgets["think_budget"].text().strip()
-        if budget and not self._validate_number(budget, allow_negative=False):
-            QMessageBox.warning(self, WIN_TITLES.get("param_error_title", "参数错误"),
-                MSG.get("invalid_budget", "思考 Token 限制必须是非负整数。"))
+    def build_command_args(self) -> Optional[list]:
+        cfg, err = self._collect_launch_config()
+        if err:
+            self._show_build_error(err)
             return None
-        if mode == "normal":
-            args += ["--reasoning", "on"]
-            if budget and budget != "0":
-                args += ["--reasoning-budget", budget]
-        elif mode == "hide":
-            args += ["--reasoning-format", "none", "--reasoning-budget", "0", "-rea", "off"]
-        elif mode == "stop":
-            args += ["--reasoning-format", "none", "-r", "</think>",
-                     "--reasoning-budget", budget or "0"]
-
-        mmproj = self.custom_widgets["mmproj"].text().strip()
-        mmproj_cb = self.custom_widgets.get("mmproj_cb", QCheckBox())
-        if mmproj and mmproj_cb.isChecked():
-            if os.path.exists(mmproj):
-                args += ["--mmproj", os.path.normpath(mmproj)]
-            else:
-                QMessageBox.warning(self, WIN_TITLES.get("warning_title", "警告"),
-                    MSG.get("startup_warning_mmproj", "MMProj 文件不存在:\n{path}").replace("{path}", mmproj))
-
-        model_draft = self.custom_widgets.get("model_draft", QLineEdit()).text().strip()
-        draft_cb = self.custom_widgets.get("draft_cb", QCheckBox())
-        if model_draft and draft_cb.isChecked() and current_spec_type.startswith("draft-"):
-            if os.path.exists(model_draft):
-                args += ["--model-draft", os.path.normpath(model_draft)]
-            else:
-                QMessageBox.warning(self, WIN_TITLES.get("warning_title", "警告"),
-                    MSG.get("startup_warning_model_draft", "Draft 模型文件不存在:\n{path}").replace("{path}", model_draft))
-
-        ga = self.custom_widgets["global_args"].text().strip()
-        if ga:
-            ga_parts = self._split_args(ga)
-            for part in ga_parts:
-                if not self._validate_arg(part):
-                    QMessageBox.warning(self, WIN_TITLES.get("param_error_title", "参数错误"),
-                        MSG.get("invalid_global_args", "全局参数包含不安全字符: {arg}").replace("{arg}", part[:50]))
-                    return None
-            args += ga_parts
-        ca = self.custom_widgets["custom_args"].text().strip()
-        if ca:
-            ca_parts = self._split_args(ca)
-            for part in ca_parts:
-                if not self._validate_arg(part):
-                    QMessageBox.warning(self, WIN_TITLES.get("param_error_title", "参数错误"),
-                        MSG.get("invalid_custom_args", "模型专属参数包含不安全字符: {arg}").replace("{arg}", part[:50]))
-                    return None
-            args += ca_parts
-
+        args, errors = _build_command_args(cfg, DYNAMIC_UI_SCHEMA)
+        for e in errors:
+            self._show_build_error(e)
         return args
-
-    @staticmethod
-    def _validate_arg(arg: str) -> bool:
-        dangerous_chars = [';', '|', '&', '$', '`', '\n', '\r', '{', '}', '<', '>']
-        return not any(c in arg for c in dangerous_chars)
-
-    @staticmethod
-    def _validate_port(port_str: str) -> bool:
-        try:
-            port = int(port_str)
-            return 1 <= port <= 65535
-        except (ValueError, TypeError):
-            return False
-
-    @staticmethod
-    def _validate_number(value: str, allow_negative: bool = False) -> bool:
-        try:
-            num = float(value)
-            return allow_negative or num >= 0
-        except (ValueError, TypeError):
-            return False
-
-    def _split_args(self, s: str) -> list:
-        r = []
-        i = 0
-        while i < len(s):
-            c = s[i]
-            if c in ('"', "'"):
-                quote = c
-                i += 1
-                start = i
-                while i < len(s) and s[i] != quote:
-                    i += 1
-                r.append(s[start:i])
-                if i < len(s):
-                    i += 1
-            elif c == ' ':
-                i += 1
-            else:
-                start = i
-                while i < len(s) and s[i] != ' ':
-                    i += 1
-                r.append(s[start:i])
-        return r
 
     # ═══════════════════════════════════════════════
     #  命令预览
@@ -1694,8 +1615,7 @@ class LlamaProLauncher(QMainWindow):
                     pass
             self.console.append_output("⚠ 检测到旧进程，正在终止并重启...", "yellow")
             old.stop()
-            old.finished.connect(
-                lambda a=args, s=is_server, c=use_console: self._do_launch(a, s, c))
+            old.finished.connect(functools.partial(self._do_launch, args, is_server, use_console))
             return
 
         self._do_launch(args, is_server, use_console)
@@ -1841,20 +1761,28 @@ class LlamaProLauncher(QMainWindow):
         stopped = False
         if self.launch_thread and self.launch_thread.isRunning():
             self.launch_thread.stop()
-            self.launch_thread.finished.connect(lambda: setattr(self, 'launch_thread', None))
+            self.launch_thread.finished.connect(self._on_launch_thread_done)
             self.status_label.setText(MSG.get("launch_stopping", "⏹ 正在停止进程..."))
             stopped = True
         if self._dl_thread and self._dl_thread.isRunning():
             dl = self._dl_thread
             dl.cancel()
             # 保留引用直到线程结束，避免运行中销毁 QThread 触发 abort
-            dl.finished.connect(lambda: self._on_dl_thread_done(dl))
+            dl.finished.connect(functools.partial(self._on_dl_thread_done, dl))
             self._dl_thread = None
             self.btn_fetch.setText(BTN.get("fetch_files", "📡 获取可用文件"))
             self.status_label.setText(MSG.get("download_cancelled", "下载已取消"))
             stopped = True
         if stopped:
             self.btn_stop.setEnabled(False)
+
+    def _on_launch_thread_done(self, rc: int = 0):
+        """launch 线程结束后释放引用（Qt finished 信号带退出码，签名兼容）。
+
+        用 sender() 守卫：stop 后若用户已重新启动新线程，不得误清其引用。
+        """
+        if self.launch_thread is self.sender():
+            self.launch_thread = None
 
     def _on_dl_thread_done(self, dl):
         if self._dl_thread is dl:

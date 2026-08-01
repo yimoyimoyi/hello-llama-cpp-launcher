@@ -16,7 +16,7 @@ BackendInfo = dict  # type alias
 # ── CUDA 驱动版本 → CUDA 工具包版本映射 ──
 # 来源: https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html
 CUDA_VERSION_MAP: list[tuple[str, str]] = [
-    ("555",  "13.1"),   # R555+ → CUDA 13.1
+    ("555",  "13.3"),   # R555+ → CUDA 13.3（官方 release 线为 13.3，无 13.1 资产）
     ("545",  "12.6"),
     ("535",  "12.5"),
     ("530",  "12.4"),   # R530+ → CUDA 12.4
@@ -46,9 +46,10 @@ def detect_cuda_version(driver_ver: str) -> str:
 # ═══════════════════════════════════════════════
 
 # Windows x64
+# 注：官方 release 的 win-cuda 资产仅发布 12.4 / 13.3 两个版本（13.1 从未存在过）
 WIN_X64_BACKENDS: list[BackendInfo] = [
     {"id": "cuda-12.4",  "label": "NVIDIA CUDA 12.4",  "suffix": "-win-cuda-12.4-x64",   "cudart_suffix": "-win-cuda-12.4-x64",   "detect_prio": 9},
-    {"id": "cuda-13.1",  "label": "NVIDIA CUDA 13.1",  "suffix": "-win-cuda-13.1-x64",   "cudart_suffix": "-win-cuda-13.1-x64",   "detect_prio": 9},
+    {"id": "cuda-13.3",  "label": "NVIDIA CUDA 13.3",  "suffix": "-win-cuda-13.3-x64",   "cudart_suffix": "-win-cuda-13.3-x64",   "detect_prio": 9},
     {"id": "hip-radeon", "label": "AMD Radeon HIP",    "suffix": "-win-hip-radeon-x64",  "cudart_suffix": None,                "detect_prio": 5},
     {"id": "vulkan",     "label": "Vulkan (通用)",     "suffix": "-win-vulkan-x64",      "cudart_suffix": None,                "detect_prio": 3},
     {"id": "sycl",       "label": "Intel SYCL",        "suffix": "-win-sycl-x64",        "cudart_suffix": None,                "detect_prio": 1},

@@ -23,6 +23,7 @@ _ARIA2C_ZIP_URL = "https://github.com/aria2/aria2/releases/download/release-1.37
 
 # ── Release 缓存 ──
 RELEASE_CACHE_PATH = os.path.join(ASSETS_DIR, "release_cache.json")
+RELEASE_CACHE_TTL = 30 * 60  # Release 缓存有效期（秒）
 
 # ── 平台常量 ──
 CREATE_NEW_CONSOLE = 0x00000010  # Windows: 在新控制台窗口中创建进程
@@ -103,14 +104,36 @@ PROXY_PORT = ""
 
 # ── 平台相关常量（按需导入） ──
 def _get_opener() -> urllib.request.OpenerDirector:
-    """构建支持系统代理的 URL opener。"""
+    """构建支持系统代理的 URL opener。
+
+    未显式配置 PROXY_HOST / PROXY_PORT 时返回默认 opener，
+    urllib 会自动读取系统代理（getproxies()），即"跟随系统代理"。
+    注意：传入 ProxyHandler({}) 会禁用全部代理，不要这么做。
+    """
     if PROXY_HOST and PROXY_PORT:
         proxy = urllib.request.ProxyHandler({
             "http":  f"http://{PROXY_HOST}:{PROXY_PORT}",
             "https": f"https://{PROXY_HOST}:{PROXY_PORT}",
         })
         return urllib.request.build_opener(proxy)
-    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener()  # 跟随系统代理（urllib 默认行为）
+
+
+def get_release_cache_info() -> tuple:
+    """读取 Release 缓存文件的 (tag, fetched_at) 摘要，无有效缓存时返回 None。
+
+    仅供 UI 展示缓存状态（如按钮 tooltip），新鲜度判定在下载线程内完成。
+    """
+    try:
+        with open(RELEASE_CACHE_PATH, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+        tag = cache.get("tag", "")
+        fetched_at = cache.get("fetched_at", "")
+        if tag and fetched_at:
+            return (tag, fetched_at)
+    except Exception:
+        pass
+    return None
 
 
 def _open_folder(path: str) -> None:

@@ -115,10 +115,10 @@ chmod +x setup_pip.sh setup_uv.sh start.sh
 │
 ├── src/
 │   ├── config.py                # 路径 / QSS 加载 / 多语言引擎 / 默认配置
-│   ├── widgets_pyside6.py       # 自定义控件（折叠面板 / 下拉框 / 控制台）
-│   ├── download_pyside6.py      # 下载线程 + 显存检测线程
+│   ├── widgets.py               # 自定义控件（折叠面板 / 下拉框 / 控制台）
+│   ├── download.py              # 下载线程 + 显存检测线程
 │   ├── backends.py              # 后端注册表（CUDA/Vulkan/SYCL/CPU）
-│   ├── launcher_pyside6.py      # 进程启动线程
+│   ├── launcher.py              # 进程启动线程
 │   ├── platform.py              # 平台调度（Win/Linux 自动导入）
 │   ├── platform_win.py          # Windows 平台函数
 │   └── platform_linux.py        # Linux 平台函数
@@ -183,7 +183,7 @@ chmod +x setup_pip.sh setup_uv.sh start.sh
 
 | 后端 | Windows | Linux |
 |------|:-------:|:-----:|
-| NVIDIA CUDA 12.4 / 13.1 | ✅ | ✅ |
+| NVIDIA CUDA 12.4 / 13.3 | ✅ | ✅ |
 | AMD HIP / ROCm | ✅ | ✅ |
 | Vulkan (通用) | ✅ | ✅ |
 | Intel SYCL / OpenVINO | ✅ | ✅ |
@@ -231,7 +231,7 @@ A: 设置页 → 🎨 外观 → 语言下拉，即时生效。
 A: 设置页 → 📐 缩放 → 拖动滑块（50%-200%），自适应模式随窗口大小自动缩放。
 
 **Q: 下载速度慢？**  
-A: 编辑 `src/config.py` 中 `MIRROR_BASE_URLS` 添加镜像，或设置 `PROXY_HOST` / `PROXY_PORT`。推荐使用代理解决或手动下载文件
+A: 程序默认跟随系统代理，开启系统代理后无需额外配置即可加速；也可编辑 `src/config.py` 中 `MIRROR_BASE_URLS` 添加镜像，或显式设置 `PROXY_HOST` / `PROXY_PORT` 指定代理。推荐使用代理解决或手动下载文件
 
 **Q: 如何保存当前参数供下次使用？**  
 A: 参数页点击 **💾 保存**，参数按模型名称独立存储。切换模型时自动恢复。

@@ -10,16 +10,61 @@ import zipfile
 import shutil
 import urllib.request
 import subprocess
+import tarfile
+from datetime import datetime
 from typing import Optional
 
 from PySide6.QtCore import QThread, Signal
 
 from .config import (
     BASE_DIR, ASSETS_DIR, BIN_DIR, _ARIA2C_EXE, _ARIA2C_ZIP, _ARIA2C_ZIP_URL,
-    GITHUB_API_URL, MIRROR_BASE_URLS, PROXY_HOST, PROXY_PORT, _get_opener,
+    GITHUB_API_URL, MIRROR_BASE_URLS, PROXY_HOST, PROXY_PORT,
+    RELEASE_CACHE_PATH, RELEASE_CACHE_TTL, _get_opener,
 )
 from .platform import CREATE_NO_WINDOW, set_opener
-from .backends import get_backends_for_platform
+from .backends import get_backends_for_platform, make_asset_pattern, make_cudart_pattern
+
+
+def filter_release_assets(assets_raw: list, backends: list, os_name: str) -> list:
+    """从 GitHub Release 资产列表中过滤出可下载项（纯函数，可脱离 Qt 单测）。
+
+    主包用 make_asset_pattern 精确锚定（llama-b\\d+-bin{suffix}），
+    cudart 伴生包用 make_cudart_pattern —— 替代原 suffix 子串匹配：
+    - 修复 cudart 包被误当主包的问题（官方命名 cudart-llama-bin-*.zip 含主包 suffix 子串）；
+    - 排除 -llava 分片、分卷、无 -bin- 变体等非主包资产。
+    返回项含 kind 字段（"main" / "cudart"），按去 cudart- 前缀后的名称排序（伴生包紧跟主包）。
+    """
+    ext_filter = ".zip" if os_name == "win32" else ".tar.gz"
+    # 预编译后端匹配规则（cudart 优先，包名可能同时含主包后缀子串）
+    backend_rules = []
+    for b in backends:
+        label = b.get("label", b.get("id", "?"))
+        if b.get("cudart_suffix"):
+            backend_rules.append(("cudart", make_cudart_pattern(b["cudart_suffix"]), label))
+        if b.get("suffix"):
+            backend_rules.append(("main", make_asset_pattern(b["suffix"], os_name), label))
+
+    available = []
+    for a in assets_raw:
+        name = a.get("name", "")
+        if ext_filter not in name:
+            continue
+        kind = None
+        matched_label = ""
+        for k, pat, label in backend_rules:
+            if pat.match(name):
+                kind = k
+                matched_label = label
+                break
+        if kind:
+            available.append({
+                "name": name,
+                "url": a.get("browser_download_url", ""),
+                "size": round(a.get("size", 0) / 1048576, 1),
+                "backend_label": matched_label,
+                "kind": kind,
+            })
+    return sorted(available, key=lambda x: re.sub(r"^cudart-", "", x["name"]))
 
 
 class ReleaseDownloadThread(QThread):
@@ -43,13 +88,15 @@ class ReleaseDownloadThread(QThread):
         self._target_name = ""
         self._target_url = ""
         self._target_size = 0
+        self._asset_kind = "main"   # "main"（主包）| "cudart"（CUDA 运行时伴生包）
         self._cancel_flag = False
 
-    def set_asset(self, name: str, url: str, size: int = 0):
-        """设置需要下载的单个 asset。"""
+    def set_asset(self, name: str, url: str, size: int = 0, kind: str = "main"):
+        """设置需要下载的单个 asset。kind: main / cudart。"""
         self._target_name = name
         self._target_url = url
         self._target_size = size
+        self._asset_kind = kind
 
     def cancel(self):
         self._cancel_flag = True
@@ -61,7 +108,11 @@ class ReleaseDownloadThread(QThread):
             self._fetch_assets()
 
     def _fetch_assets(self):
-        """从 GitHub Release API 获取可用 asset 列表（不包含 llava/cli 等单分片）。"""
+        """获取可用 asset 列表（不包含 llava/cli 等单分片）。
+
+        优先使用本地缓存（30 分钟内有效，见 RELEASE_CACHE_TTL），
+        命中时不再请求 GitHub API，避免触发未认证限流。
+        """
         import platform as _platform
         from .backends import get_backends_for_platform
         os_name = sys.platform
@@ -73,6 +124,15 @@ class ReleaseDownloadThread(QThread):
 
         if not backends:
             self.error_signal.emit("未找到当前平台的下载配置")
+            return
+
+        # ── 缓存命中：直接返回（30 分钟内 + tag + 平台一致） ──
+        cache = self._load_release_cache()
+        if cache:
+            tag = cache.get("tag", "unknown")
+            available = cache.get("assets", [])
+            self.raw_signal.emit(f"使用缓存 Release: {tag}（{RELEASE_CACHE_TTL // 60} 分钟内有效）")
+            self.assets_signal.emit(sorted(available, key=lambda x: x["name"]))
             return
 
         try:
@@ -88,50 +148,69 @@ class ReleaseDownloadThread(QThread):
             assets_raw = data.get("assets", [])
             self.raw_signal.emit(f"Release: {tag}, 共 {len(assets_raw)} 个文件")
 
-            ext_filter = ".zip" if os_name == "win32" else ".tar.gz"
-            available = []
-            for a in assets_raw:
-                if self._cancel_flag:
-                    return
-                name = a.get("name", "")
-                size_mb = round(a.get("size", 0) / 1048576, 1)
-                dl_url = a.get("browser_download_url", "")
-                if ext_filter not in name:
-                    continue
-
-                matched = False
-                matched_label = ""
-                for b in backends:
-                    # 后端条目用 suffix 字段标识文件特征（如 "-win-cuda-12.4-x64"）
-                    if b.get("suffix") and b["suffix"] in name:
-                        matched = True
-                        matched_label = b.get("label", b.get("id", "?"))
-                        break
-
-                if matched:
-                    available.append({
-                        "name": name,
-                        "url": dl_url,
-                        "size": size_mb,
-                        "backend_label": matched_label,
-                    })
-
-            self.assets_signal.emit(sorted(available, key=lambda x: x["name"]))
+            available = filter_release_assets(assets_raw, backends, os_name)
+            if self._cancel_flag:
+                return
+            self._save_release_cache(tag, available)
+            self.assets_signal.emit(available)
         except Exception as e:
             self.error_signal.emit(f"获取 Release 失败: {e}")
 
+    # ── Release 缓存 ──
+
+    def _platform_key(self) -> str:
+        """缓存平台标识，避免跨平台误用缓存。"""
+        import platform as _platform
+        return f"{sys.platform}/{_platform.machine().lower()}"
+
+    # 缓存结构版本号：过滤逻辑/字段变化时递增，旧版本缓存一律失效
+    CACHE_SCHEMA_VERSION = 2
+
+    def _load_release_cache(self) -> Optional[dict]:
+        """读取 Release 缓存；过期 / 平台不符 / 版本不符 / 损坏时返回 None。"""
+        try:
+            if not os.path.isfile(RELEASE_CACHE_PATH):
+                return None
+            with open(RELEASE_CACHE_PATH, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+            if not isinstance(cache, dict) or not cache.get("assets"):
+                return None
+            if cache.get("v") != self.CACHE_SCHEMA_VERSION:
+                return None
+                return None
+            fetched_at = datetime.fromisoformat(str(cache.get("fetched_at", "")))
+            if (datetime.now() - fetched_at).total_seconds() > RELEASE_CACHE_TTL:
+                return None
+            if cache.get("platform") != self._platform_key():
+                return None
+            return cache
+        except Exception:
+            return None
+
+    def _save_release_cache(self, tag: str, available: list) -> None:
+        """写入 Release 缓存：版本 / fetched_at / tag / 平台 / 过滤后的可用列表。"""
+        try:
+            cache = {
+                "v": self.CACHE_SCHEMA_VERSION,
+                "fetched_at": datetime.now().isoformat(timespec="seconds"),
+                "tag": tag,
+                "platform": self._platform_key(),
+                "assets": available,
+            }
+            with open(RELEASE_CACHE_PATH, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.raw_signal.emit(f"Release 缓存写入失败: {e}")
+
     def _download_single(self):
-        """使用 aria2c 下载单个文件，失败时尝试 urllib 回退。"""
+        """使用 aria2c 下载单个文件，失败时尝试 urllib 回退；下载成功后自动解压。"""
         os.makedirs(self._bin_dir, exist_ok=True)
         dest = os.path.join(self._bin_dir, self._target_name)
 
-        # 尝试 aria2c
+        # 尝试 aria2c（不存在时自动下载）
         if os.path.isfile(_ARIA2C_EXE):
             try:
                 self._download_with_aria2c(dest)
-                if os.path.isfile(dest) and os.path.getsize(dest) > 1024:
-                    self.finished_signal.emit(dest)
-                    return
             except Exception as e:
                 self.raw_signal.emit(f"aria2c 下载失败: {e}")
         else:
@@ -139,11 +218,13 @@ class ReleaseDownloadThread(QThread):
             try:
                 self._ensure_aria2c()
                 self._download_with_aria2c(dest)
-                if os.path.isfile(dest) and os.path.getsize(dest) > 1024:
-                    self.finished_signal.emit(dest)
-                    return
             except Exception as e:
                 self.raw_signal.emit(f"aria2c 下载失败: {e}")
+
+        # aria2c 下载成功 → 解压收尾
+        if os.path.isfile(dest) and os.path.getsize(dest) > 1024:
+            self._finish_download(dest)
+            return
 
         # 回退到 urllib
         self.raw_signal.emit("aria2c 不可用，使用 urllib 回退下载...")
@@ -153,13 +234,125 @@ class ReleaseDownloadThread(QThread):
             try:
                 self._download_with_urllib(dest)
                 if os.path.isfile(dest):
-                    self.finished_signal.emit(dest)
+                    self._finish_download(dest)
                     return
             except Exception as e:
                 self.raw_signal.emit(f"urllib 尝试 {attempt}/{self._retry_count} 失败: {e}")
                 time.sleep(2)
 
         self.error_signal.emit(f"所有下载方式均失败: {self._target_name}")
+
+    # ── 下载收尾：解压 + 验证 ──
+
+    def _finish_download(self, dest: str):
+        """下载完成后的收尾流程：解压压缩包 → 验证产物 → 清理压缩包。
+
+        解压或验证失败时发送 error_signal，成功才发送 finished_signal。
+        产物验证基于本次解压出的文件列表，不受 bin 目录旧文件影响；
+        cudart 伴生包按 CUDA 运行时 DLL（cudart64_* / cublas*）验证，主包按 llama-* 验证。
+        """
+        try:
+            extracted = self._extract_archive(dest)
+        except Exception as e:
+            self.error_signal.emit(f"解压失败: {e}")
+            return
+
+        if self._asset_kind == "cudart":
+            # 伴生包：验证 CUDA 运行时 DLL
+            found = sorted(n for n in extracted
+                           if n.lower().startswith(("cudart64_", "cublas")))
+            if not found:
+                self.error_signal.emit(
+                    f"解压完成但未找到 CUDA 运行时 DLL，请检查目录: {self._bin_dir}")
+                return
+            self.raw_signal.emit(f"CUDA 运行时解压完成，已检测到: {', '.join(found)}")
+        else:
+            # 主包：验证 llama 可执行文件（兼容包内嵌套目录）
+            found = sorted(n for n in extracted if n.lower().startswith("llama-"))
+            if not found:
+                self.error_signal.emit(
+                    f"解压完成但未找到 llama 可执行文件，请检查目录: {self._bin_dir}")
+                return
+            self.raw_signal.emit(f"解压完成，已检测到: {', '.join(found)}")
+        self.finished_signal.emit(dest)
+
+    def _extract_archive(self, dest: str) -> list:
+        """解压 .zip / .tar.gz 到 bin 目录，成功后删除压缩包原文件。
+
+        带 zip-slip 路径穿越防护：成员路径归一化后必须位于 bin 目录内。
+        返回本次解压出的文件 basename 列表（供产物验证）。
+        """
+        if not os.path.isfile(dest):
+            return []
+        extracted = []
+        name = self._target_name.lower()
+        if name.endswith(".zip"):
+            self.status_signal.emit(f"正在解压: {self._target_name}")
+            with zipfile.ZipFile(dest, "r") as zf:
+                for member in zf.infolist():
+                    if self._cancel_flag:
+                        return []
+                    extracted += self._safe_extract_zip_member(zf, member)
+        elif name.endswith(".tar.gz") or name.endswith(".tgz"):
+            self.status_signal.emit(f"正在解压: {self._target_name}")
+            with tarfile.open(dest, "r:gz") as tf:
+                for member in tf.getmembers():
+                    if self._cancel_flag:
+                        return []
+                    extracted += self._safe_extract_tar_member(tf, member)
+        else:
+            # 非压缩包（正常流程不会出现），视为解压失败
+            raise ValueError(f"未知文件格式: {self._target_name}")
+
+        # 解压成功，删除压缩包，避免占用空间
+        try:
+            os.remove(dest)
+            self.raw_signal.emit(f"已删除压缩包: {self._target_name}")
+        except Exception:
+            pass
+        return extracted
+
+    def _check_zip_slip(self, member_path: str) -> str:
+        """校验压缩成员路径，拒绝 ../ 等路径穿越（zip-slip），返回安全目标路径。"""
+        target = os.path.normpath(os.path.join(self._bin_dir, member_path))
+        if not (target.startswith(self._bin_dir + os.sep) or target == self._bin_dir):
+            raise ValueError(f"非法解压路径: {member_path}")
+        return target
+
+    def _safe_extract_zip_member(self, zf: zipfile.ZipFile, member: zipfile.ZipInfo) -> list:
+        """安全解压单个 zip 成员（流式复制，避免 zip-slip 与符号链接逃逸）。
+
+        返回解压出的文件 basename 列表（目录成员返回空）。
+        """
+        target = self._check_zip_slip(member.filename)
+        if member.is_dir():
+            os.makedirs(target, exist_ok=True)
+            return []
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with zf.open(member) as src, open(target, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        return [os.path.basename(target)]
+
+    def _safe_extract_tar_member(self, tf: tarfile.TarFile, member: tarfile.TarInfo) -> list:
+        """安全解压单个 tar 成员；跳过符号/硬链接，保留可执行权限。
+
+        返回解压出的文件 basename 列表（目录/链接成员返回空）。
+        """
+        target = self._check_zip_slip(member.name)
+        if member.isdir():
+            os.makedirs(target, exist_ok=True)
+            return []
+        if not member.isfile():
+            return []  # 跳过 symlink / hardlink / 设备文件
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with tf.extractfile(member) as src, open(target, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        # Linux 下保留可执行权限（tar 包内 mode 含可执行位）
+        try:
+            os.chmod(target, member.mode)
+        except Exception:
+            pass
+        return [os.path.basename(target)]
 
     def _ensure_aria2c(self):
         """从 GitHub 下载 aria2c 到 assets/。"""

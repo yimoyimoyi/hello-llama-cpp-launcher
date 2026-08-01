@@ -109,10 +109,10 @@ chmod +x setup_pip.sh setup_uv.sh start.sh
 │
 ├── src/
 │   ├── config.py                # パス / QSS ローダー / i18n エンジン / デフォルト設定
-│   ├── widgets_pyside6.py               # カスタムウィジェット（折りたたみパネル / コンボボックス / コンソール）
-│   ├── download_pyside6.py              # ダウンロードスレッド + VRAM 検出スレッド
+│   ├── widgets.py               # カスタムウィジェット（折りたたみパネル / コンボボックス / コンソール）
+│   ├── download.py              # ダウンロードスレッド + VRAM 検出スレッド
 │   ├── backends.py              # バックエンドレジストリ（CUDA/Vulkan/SYCL/CPU）
-│   ├── launcher_pyside6.py              # プロセス起動スレッド
+│   ├── launcher.py              # プロセス起動スレッド
 │   ├── platform.py              # プラットフォームディスパッチ（Win/Linux 自動インポート）
 │   ├── platform_win.py          # Windows プラットフォーム関数
 │   └── platform_linux.py        # Linux プラットフォーム関数

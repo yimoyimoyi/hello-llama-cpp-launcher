@@ -3,7 +3,11 @@ PySide6 自定义控件模块：折叠面板、自适应下拉框、控制台面
 """
 import os
 import sys
+import re
 import json
+import html
+import subprocess
+from typing import Callable, Optional
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -11,7 +15,7 @@ from PySide6.QtWidgets import (
     QDialog, QApplication, QFileDialog, QMessageBox, QSizePolicy,
     QListWidget, QListView, QFrame, QGraphicsOpacityEffect,
 )
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QFont
 
 from .platform import save_script
@@ -27,12 +31,15 @@ class CollapsibleSection(QWidget):
     """可点击标题栏展开/收纳的折叠面板，使用 opacity 淡入淡出避免布局抖动。"""
 
     def __init__(self, title: str, content: QWidget, section_key: str = "",
-                 collapsed: bool = False, parent=None):
+                 collapsed: bool = False, parent=None,
+                 on_toggled: Optional[Callable[[str, bool], None]] = None):
+        """on_toggled: 折叠状态翻转后的回调 (section_key, collapsed)，由调用方负责持久化。"""
         super().__init__(parent)
         self._key       = section_key
         self._collapsed = collapsed
         self._content   = content
         self._animating = False
+        self._on_toggled = on_toggled
 
         # 标题栏
         header = QWidget()
@@ -79,6 +86,10 @@ class CollapsibleSection(QWidget):
         if self._animating:
             return
         self.set_collapsed(not self._collapsed, animate=True)
+        # set_collapsed 内已同步翻转 _collapsed，这里读取的即目标状态；
+        # 回调绑定"状态翻转完成"而非"动画完成"（动画可能被 stop，不触发 finished）
+        if self._on_toggled:
+            self._on_toggled(self._key, self._collapsed)
 
     def _on_fade_finished(self):
         self._animating = False
@@ -356,6 +367,12 @@ class ConsoleWidget(QWidget):
         super().__init__(parent)
         self._interactive = False
         self._theme = "dark"
+        # 高频输出批量合并：50ms 惰性 flush，避免逐行 append + 滚动卡顿
+        self._pending: list = []
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setSingleShot(True)
+        self._flush_timer.setInterval(50)
+        self._flush_timer.timeout.connect(self._flush_output)
         self._init_ui()
 
     def _init_ui(self):
@@ -378,7 +395,7 @@ class ConsoleWidget(QWidget):
         ir.setSpacing(4)
 
         self.clear_btn = QPushButton(BTN.get("clear", "清空"))
-        self.clear_btn.clicked.connect(self.output.clear)
+        self.clear_btn.clicked.connect(self._clear_output)
         ir.addWidget(self.clear_btn)
 
         self.export_btn = QPushButton(BTN.get("export_log", "导出日志"))
@@ -399,6 +416,7 @@ class ConsoleWidget(QWidget):
         self._apply_theme()
 
     def _export_log(self):
+        self._flush_output()  # 先落盘待合并输出，保证日志完整
         path, _ = QFileDialog.getSaveFileName(
             self,
             WIN_TITLES.get("export_log_title", "导出日志"),
@@ -441,23 +459,62 @@ class ConsoleWidget(QWidget):
         self.export_btn.setStyleSheet(styles["export_btn"])
         self.send_btn.setStyleSheet(styles["send_btn"])
 
-    def append_output(self, text: str, color: str = None):
-        if color:
-            hex_color = getattr(self, '_console_colors', {}).get(color, color)
-            self.output.append(f'<span style="color:{hex_color}">{text}</span>')
+    # 颜色白名单：仅接受合法 hex 或纯字母 CSS 颜色名，杜绝样式注入
+    _COLOR_RE = re.compile(r"^(?:#[0-9a-fA-F]{3,8}|[a-zA-Z]+)$")
+
+    def _safe_color(self, color: str) -> str:
+        """校验颜色值，非法时返回空串（丢弃颜色，仅保留转义文本）。"""
+        if color and self._COLOR_RE.match(color):
+            return color
+        return ""
+
+    def _append_line_now(self, text: str, color: str = None):
+        """立即追加一行（不经批量队列），文本一律 HTML 转义。"""
+        safe = html.escape(text, quote=False).replace("\n", "<br>")
+        safe_color = self._safe_color(getattr(self, '_console_colors', {}).get(color, color) if color else "")
+        if safe_color:
+            self.output.append(f'<span style="color:{safe_color}">{safe}</span>')
         else:
-            self.output.append(text)
+            self.output.append(safe)
         scrollbar = self.output.verticalScrollBar()
         if scrollbar:
             scrollbar.setValue(scrollbar.maximum())
 
+    def _flush_output(self):
+        """合并 50ms 内的待追加输出，一次批量写入 + 一次滚动。"""
+        if not self._pending:
+            return
+        pending, self._pending = self._pending, []
+        blocks = []
+        for text, color in pending:
+            safe = html.escape(text, quote=False).replace("\n", "<br>")
+            safe_color = self._safe_color(getattr(self, '_console_colors', {}).get(color, color) if color else "")
+            blocks.append(f'<span style="color:{safe_color}">{safe}</span>' if safe_color else safe)
+        self.output.append("<br>".join(blocks))
+        scrollbar = self.output.verticalScrollBar()
+        if scrollbar:
+            scrollbar.setValue(scrollbar.maximum())
+
+    def _clear_output(self):
+        self._pending.clear()
+        self._flush_timer.stop()
+        self.output.clear()
+
+    def append_output(self, text: str, color: str = None):
+        """追加一行输出（入批量队列，50ms 后合并写入）。"""
+        self._pending.append((text, color))
+        if not self._flush_timer.isActive():
+            self._flush_timer.start()
+
     def refresh_last_line(self, text: str, color: str = None):
+        """刷新最后一行。先 flush 队列保证\"最后一行\"语义，再立即追加。"""
+        self._flush_output()
         cursor = self.output.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         cursor.movePosition(cursor.MoveOperation.StartOfBlock, cursor.MoveMode.KeepAnchor)
         cursor.removeSelectedText()
         self.output.setTextCursor(cursor)
-        self.append_output(text, color)
+        self._append_line_now(text, color)
 
 
 # ═══════════════════════════════════════════════
@@ -532,8 +589,13 @@ class CommandPreviewDialog(QDialog):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
-        oneline = " ".join(cmd_parts)
-        self.cmd_label = QLabel(f"<pre>{oneline}</pre>")
+        # 用 list2cmdline 复原带引号的参数（" ".join 会把含空格的参数显示成断开形态）
+        if sys.platform == "win32":
+            oneline = subprocess.list2cmdline(cmd_parts)
+        else:
+            import shlex
+            oneline = shlex.join(cmd_parts)
+        self.cmd_label = QLabel(f"<pre>{html.escape(oneline)}</pre>")
         self.cmd_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.cmd_label.setWordWrap(True)
         layout.addWidget(self.cmd_label)
@@ -610,10 +672,15 @@ class CommandPreviewDialog(QDialog):
 
     def _copy_command(self):
         cb = QApplication.clipboard()
-        cb.setText(" ".join(self.cmd_parts))
+        if sys.platform == "win32":
+            oneline = subprocess.list2cmdline(self.cmd_parts)
+        else:
+            import shlex
+            oneline = shlex.join(self.cmd_parts)
+        cb.setText(oneline)
         self.cmd_label.setText(
-            f"<pre>{' '.join(self.cmd_parts)}</pre>\n"
-            f"<span style='color:green'>✅ {MSG.get('copied', '已复制到剪贴板')}</span>")
+            f"<pre>{html.escape(oneline)}</pre>\n"
+            f"<span style='color:green'>✅ {html.escape(MSG.get('copied', '已复制到剪贴板'))}</span>")
 
     def _save_script(self):
         path = save_script(self.cmd_parts, os.path.dirname(os.path.abspath(__file__)))
