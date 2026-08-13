@@ -76,7 +76,6 @@
                 "controls": [
                     {"id": "think_normal", "type": "radio",   "label": "正常输出", "group": "think_mode", "value": "normal"},
                     {"id": "think_hide",   "type": "radio",   "label": "完全隐藏", "group": "think_mode", "value": "hide", "new_row": false},
-                    {"id": "think_stop",   "type": "radio",   "label": "物理截断", "group": "think_mode", "value": "stop", "new_row": false},
                     {"id": "think_budget", "type": "text",    "label": "思考 Token 限制:", "default": "0"},
                     {"id": "mmproj_cb",    "type": "checkbox","label": "启用", "default": false, "config_key": "mmproj_enable"},
                     {"id": "mmproj",       "type": "file",    "label": "MMProj 文件:", "default": "", "enable_by": "mmproj_cb", "new_row": false},
@@ -188,7 +187,6 @@
         "checkbox_enable": "启用",
         "radio_normal": "正常输出",
         "radio_hide": "完全隐藏",
-        "radio_stop": "物理截断",
         "mode_cli": "CLI",
         "mode_server": "Server",
         "label_font_file": "自定义字体路径:",

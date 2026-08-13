@@ -253,10 +253,12 @@ def build_command_args(cfg: LaunchConfig, schema: list) -> tuple:
         if budget and budget != "0":
             args += ["--reasoning-budget", budget]
     elif mode == "hide":
-        args += ["--reasoning-format", "none", "--reasoning-budget", "0", "-rea", "off"]
-    elif mode == "stop":
-        args += ["--reasoning-format", "none", "-r", "</think>",
-                 "--reasoning-budget", budget or "0"]
+        # 关闭思考：-rea off 是唯一实测有效的开关（b10107 实机验证）。
+        # 注意不要传 --reasoning-format none —— 其语义是"思考留在 message.content"
+        # （不隐藏），会残留空的 <think></think> 标签；--reasoning-budget 实测无效。
+        # 该方式仅对 llama.cpp 可识别 reasoning 的模型（Qwen3/DeepSeek 等）生效，
+        # VibeThinker 等文本式思考模型（qwen2 架构）无法通过参数关闭。
+        args += ["-rea", "off"]
 
     warnings = []
     if cfg.mmproj and cfg.mmproj_enabled:

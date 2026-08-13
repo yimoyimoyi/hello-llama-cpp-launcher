@@ -89,9 +89,8 @@ Each model saves its parameter preset independently. Presets are auto-loaded whe
 
 ### Reasoning Mode
 
-- **Normal** — Print content enclosed by ` response` tags
-- **Hidden** — `--reasoning-format none --reasoning-budget 0 -rea off`
-- **Stop** — Stop generation after encountering ` response`
+- **Normal** — `--reasoning on`; thinking is output normally. The "Think Budget" field sets the reasoning token budget (`--reasoning-budget N`, effective for models/versions that support it)
+- **Hidden** — `-rea off`; disables thinking (only works for models with reasoning support, e.g. Qwen3 / DeepSeek families; text-style thinking models like VibeThinker cannot disable thinking via parameters)
 
 ### External Console
 

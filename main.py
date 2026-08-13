@@ -52,6 +52,18 @@ from src.widgets import (
 _LEFT  = Qt.AlignmentFlag.AlignLeft
 _RIGHT = Qt.AlignmentFlag.AlignRight
 
+# 思考模式历史值映射：旧版"stop（物理截断）"模式已被移除（llama.cpp 实测无法
+# 实现截断），旧配置中的 "stop" 读取时归一到 "hide"（关闭思考，最贴近原意图）。
+THINK_MODE_LEGACY_MAP = {"stop": "hide"}
+
+
+def _normalize_think_mode(mode: str) -> str:
+    """归一思考模式：旧值映射（stop → hide），未知值回退 "normal"。"""
+    mode = mode or ""
+    if mode in ("normal", "hide"):
+        return mode
+    return THINK_MODE_LEGACY_MAP.get(mode, "normal")
+
 # ═══════════════════════════════════════════════
 #  LlamaProLauncher —— 主窗口
 # ═══════════════════════════════════════════════
@@ -99,8 +111,8 @@ class LlamaProLauncher(QMainWindow):
         self.custom_widgets: dict = {}
         self._sections: list = []
 
-        # 思考模式
-        self._think_mode = self.config.get("think_mode", "normal")
+        # 思考模式（旧值 "stop" 归一为 "hide"）
+        self._think_mode = _normalize_think_mode(self.config.get("think_mode", "normal"))
 
         # 构建 UI
         self.build_ui()
@@ -645,13 +657,10 @@ class LlamaProLauncher(QMainWindow):
                     bg = btn_groups[rgroup]
                     w = QRadioButton(label)
                     bg.addButton(w)
-                    current_val = self.config.get(rgroup, "normal")
+                    current_val = _normalize_think_mode(self.config.get(rgroup, "normal"))
                     w.setChecked(current_val == rvalue)
-                    w.toggled.connect(lambda checked, val=rvalue, rg=rgroup: (
-                        checked and self.config.update({rg: val}) and
-                        (self.set_think_mode(val) if rg == "think_mode" else None) and
-                        self.save_settings()
-                    ))
+                    w.toggled.connect(
+                        lambda checked, val=rvalue, rg=rgroup: self._on_radio_toggled(checked, val, rg))
                     if rgroup == "think_mode":
                         setattr(self, f"radio_{rvalue}", w)
                     if new_row:
@@ -884,8 +893,25 @@ class LlamaProLauncher(QMainWindow):
             if hasattr(sec, '_content') and sec._content:
                 sec._content.update()
 
+    def _on_radio_toggled(self, checked: bool, val: str, rg: str):
+        """radio 选中回调：更新配置并落盘。
+
+        注意：不要用 `and` 链式调用 —— dict.update() 返回 None 会短路，
+        导致 set_think_mode / save_settings 不执行（历史 bug：切换思考模式
+        不生效、配置不落盘）。
+        """
+        if not checked:
+            return
+        self.config.update({rg: val})
+        if rg == "think_mode":
+            self.set_think_mode(val)
+        self.save_settings()
+
     def set_think_mode(self, mode: str):
         self._think_mode = mode
+        # 隐藏思考的适用范围提示（-rea off 仅对 llama.cpp 可识别 reasoning 的模型生效）
+        if mode == "hide" and hasattr(self, "status_label"):
+            self.status_label.setText(MSG.get("think_hide_hint", ""))
 
     def on_server_mode_toggle(self, checked: bool):
         mode_text = UI_LABELS.get("mode_server", "Server") if checked else UI_LABELS.get("mode_cli", "CLI")
@@ -1196,10 +1222,10 @@ class LlamaProLauncher(QMainWindow):
             for cid, widget in self.custom_widgets.items():
                 if cid in p:
                     self._load_widget_from_state(widget, p[cid])
-            # 加载 think_mode（radio buttons）
-            mode = p.get("think_mode", "normal")
+            # 加载 think_mode（radio buttons，旧值 "stop" 归一到 "hide"）
+            mode = _normalize_think_mode(p.get("think_mode", "normal"))
             self._think_mode = mode
-            for rb_val in ("normal", "hide", "stop"):
+            for rb_val in ("normal", "hide"):
                 rb = getattr(self, f"radio_{rb_val}", None)
                 if rb:
                     rb.setChecked(rb_val == mode)
@@ -1209,7 +1235,7 @@ class LlamaProLauncher(QMainWindow):
             # 写回配置并落盘（覆盖用户的 is_server_mode/mmproj 等设置）
             _suspend = [w for w in list(self.dynamic_vars.values()) + list(self.custom_widgets.values())
                         if isinstance(w, (QCheckBox, QLineEdit))]
-            for rb_val in ("normal", "hide", "stop"):
+            for rb_val in ("normal", "hide"):
                 rb = getattr(self, f"radio_{rb_val}", None)
                 if rb:
                     _suspend.append(rb)
@@ -1231,7 +1257,7 @@ class LlamaProLauncher(QMainWindow):
                             self._reset_widget_to_default(w, ctrl["default"])
                 # 重置 radio buttons 为 normal
                 self._think_mode = "normal"
-                for rb_val in ("normal", "hide", "stop"):
+                for rb_val in ("normal", "hide"):
                     rb = getattr(self, f"radio_{rb_val}", None)
                     if rb:
                         rb.setChecked(rb_val == "normal")

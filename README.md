@@ -95,9 +95,8 @@ chmod +x setup_pip.sh setup_uv.sh start.sh
 
 ### 思考模式
 
-- **正常** — 打印 ` response` 标签包围的内容
-- **隐藏** — `--reasoning-format none --reasoning-budget 0 -rea off`
-- **停止** — 遇到 ` response` 后停止生成
+- **正常** — `--reasoning on`，思考正常输出；"思考 Token 限制"可设置思考预算（`--reasoning-budget N`，对支持该参数的模型/版本生效）
+- **隐藏** — `-rea off`，关闭思考（仅对 llama.cpp 可识别推理的模型有效，如 Qwen3 / DeepSeek 系；VibeThinker 等文本式思考模型无法通过参数关闭）
 
 ### 外部控制台
 

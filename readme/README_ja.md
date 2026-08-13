@@ -89,9 +89,8 @@ chmod +x setup_pip.sh setup_uv.sh start.sh
 
 ### 推論モード
 
-- **通常** — ` response` タグで囲まれたコンテンツを表示
-- **非表示** — `--reasoning-format none --reasoning-budget 0 -rea off`
-- **停止** — ` response` に遭遇した後に生成を停止
+- **通常** — `--reasoning on` で思考を通常出力します。「思考 Token 制限」欄で思考予算を設定できます（`--reasoning-budget N`。対応モデル/バージョンで有効）
+- **非表示** — `-rea off` で思考を無効化します（推論対応モデル（Qwen3 / DeepSeek 系など）でのみ有効。VibeThinker 等のテキスト式思考モデルはパラメータで無効化できません）
 
 ### 外部コンソール
 
